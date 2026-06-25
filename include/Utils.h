@@ -1809,7 +1809,7 @@ public:
 		double* lat_south = NULL
 	);
 
-	/*@brief 单视复图像地理编码：SAR图像坐标系--->墨卡托坐标系
+	/*@brief 单视复图像地理编码：SAR图像坐标系--->地理坐标系（经纬高）
 	* @param DEM84                        84坐标系DEM（short型矩阵）
 	* @param slc                          待编码单视复图像
 	* @param mapped_resolution_x          编码后产品东西向分辨率（m）
@@ -1858,6 +1858,62 @@ public:
 		Mat& stateVector,
 		double lon_spacing,
 		double lat_spacing,
+		double* lon_east = NULL,
+		double* lon_west = NULL,
+		double* lat_north = NULL,
+		double* lat_south = NULL
+	);
+	/*@brief 单视复图像地理编码：SAR图像坐标系--->地理坐标系（经纬高）
+	* @param DEM84                        84坐标系DEM（short型矩阵）
+	* @param slc                          待编码单视复图像
+	* @param mapped_resolution_x          编码后产品东西向分辨率（m）
+	* @param mapped_resolution_y          编码后产品南北向分辨率（m）
+	* @param mapped_slc                   地理编码结果（返回值）
+	* @param lon_upperleft                84坐标系DEM左上角经度
+	* @param lat_upperleft                84坐标系DEM左上角纬度
+	* @param offset_row                   SAR图像在原场景中的行偏移量
+	* @param offset_col                   SAR图像在原场景中的列偏移量
+	* @param sceneHeight                  SAR图像场景高度
+	* @param sceneWidth                   SAR图像场景宽度
+	* @param prf                          SAR卫星雷达脉冲重复频率
+	* @param rangeSpacing                 距离向采样间隔（m）
+	* @param wavelength                   波长
+	* @param nearRangeTime                最近斜距时间
+	* @param acquisitionStartTime         方位向采样开始时间
+	* @param acquisitionStopTime          方位向采样结束时间
+	* @param stateVector                  卫星轨道数据（未插值）
+	* @param lon_spacing                  84坐标系DEM经度采样间隔（°）
+	* @param lat_spacing                  84坐标系DEM纬度采样间隔（°）
+	* @param interp_times                 84坐标系DEM插值倍数（默认值为10）
+	* @resample_method                    重采样方法（0：双线性，1：立方卷积）
+	* @param lon_east                     编码图像最东边缘经度（返回值）
+	* @param lon_west                     编码图像最西边缘经度（返回值）
+	* @param lat_north                    编码图像最北边缘纬度（返回值）
+	* @param lat_south                    编码图像最南边缘纬度（返回值）
+	* @return 成功返回0，否则返回-1
+	*/
+	int geocode(
+		Mat& DEM84,
+		ComplexMat& slc,
+		double mapped_resolution_x,
+		double mapped_resolution_y,
+		ComplexMat& mapped_slc,
+		double lon_upperleft,
+		double lat_upperleft,
+		int offset_row,
+		int offset_col,
+		int sceneHeight,
+		int sceneWidth,
+		double prf,
+		double rangeSpacing,
+		double wavelength,
+		double nearRangeTime,
+		double acquisitionStartTime,
+		double acquisitionStopTime,
+		Mat& stateVector,
+		double lon_spacing,
+		double lat_spacing,
+		int resample_method = 0,
 		double* lon_east = NULL,
 		double* lon_west = NULL,
 		double* lat_north = NULL,

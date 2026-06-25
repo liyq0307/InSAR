@@ -38,6 +38,63 @@ using namespace cv;
 	    else \
         ch = *instring; \
 }
+
+// 重采样方式
+#define RESAMPLE_BILINEAR 0
+#define RESAMPLE_CUBIC    1
+
+// Keys cubic convolution kernel
+// a = -0.5: 常用三次卷积；如果想接近 OpenCV INTER_CUBIC，可改成 -0.75
+static inline double cubicWeight(double x)
+{
+	x = fabs(x);
+	const double a = -0.5;
+
+	if (x <= 1.0)
+	{
+		return (a + 2.0) * x * x * x - (a + 3.0) * x * x + 1.0;
+	}
+	else if (x < 2.0)
+	{
+		return a * x * x * x - 5.0 * a * x * x + 8.0 * a * x - 4.0 * a;
+	}
+	else
+	{
+		return 0.0;
+	}
+}
+
+template<typename T>
+static inline double bilinearAt(const cv::Mat& img, int y, int x, double dy, double dx)
+{
+	double upper = (double)img.at<T>(y, x) +
+		((double)img.at<T>(y, x + 1) - (double)img.at<T>(y, x)) * dx;
+
+	double lower = (double)img.at<T>(y + 1, x) +
+		((double)img.at<T>(y + 1, x + 1) - (double)img.at<T>(y + 1, x)) * dx;
+
+	return upper + (lower - upper) * dy;
+}
+
+template<typename T>
+static inline double cubicAt(const cv::Mat& img, int y, int x, double dy, double dx)
+{
+	double value = 0.0;
+
+	for (int m = -1; m <= 2; m++)
+	{
+		double wy = cubicWeight((double)m - dy);
+
+		for (int n = -1; n <= 2; n++)
+		{
+			double wx = cubicWeight((double)n - dx);
+			value += (double)img.at<T>(y + m, x + n) * wy * wx;
+		}
+	}
+
+	return value;
+}
+
 inline bool return_check(int ret, const char* detail_info, const char* error_head)
 {
 	if (ret < 0)
@@ -10801,6 +10858,690 @@ int Utils::getCopernicusDEM(
 		*lon_spacing = lonSpacing;
 		*lat_spacing = latSpacing;
 	}
+	//DEM在16个方格内
+	else if (CopernicusDEMFileName.size() == 16)
+	{
+		int xx[16], yy[16], temp;
+
+		for (int i = 0; i < 16; i++)
+		{
+			if (CopernicusDEMFileName[i].substr(22, 1) == string("N") && CopernicusDEMFileName[i].substr(29, 1) == string("E"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_N%d_00_E%d_00_DEM.tif", &xx[i], &yy[i]);
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("N") && CopernicusDEMFileName[i].substr(29, 1) == string("W"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_N%d_00_W%d_00_DEM.tif", &xx[i], &yy[i]);
+				yy[i] = -yy[i];
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("S") && CopernicusDEMFileName[i].substr(29, 1) == string("E"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_S%d_00_E%d_00_DEM.tif", &xx[i], &yy[i]);
+				xx[i] = -xx[i];
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("S") && CopernicusDEMFileName[i].substr(29, 1) == string("W"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_S%d_00_W%d_00_DEM.tif", &xx[i], &yy[i]);
+				yy[i] = -yy[i];
+				xx[i] = -xx[i];
+			}
+			else
+			{
+				return -1;
+			}
+		}
+		Mat outDEM, outDEM2, outDEM3, outDEM4, outDEM5, outDEM6, outDEM7, outDEM8;
+		//四行四列
+		string path = DEMPath + string("\\") + CopernicusDEMFileName[0];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[1];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM2);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM2 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[2];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[3];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM, outDEM2, outDEM);
+		cv::hconcat(outDEM, outDEM3, outDEM);
+		cv::hconcat(outDEM, outDEM4, outDEM);
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[4];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM2);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM2 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[5];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[6];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[7];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM2, outDEM3, outDEM2);
+		cv::hconcat(outDEM2, outDEM4, outDEM2);
+		cv::hconcat(outDEM2, outDEM5, outDEM2);
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[8];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[9];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[10];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[11];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM3, outDEM4, outDEM3);
+		cv::hconcat(outDEM3, outDEM5, outDEM3);
+		cv::hconcat(outDEM3, outDEM6, outDEM3);
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[12];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[13];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[14];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[15];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM4, outDEM5, outDEM4);
+		cv::hconcat(outDEM4, outDEM6, outDEM4);
+		cv::hconcat(outDEM4, outDEM7, outDEM4);
+
+		latSpacing = 1.0 / double(outDEM7.rows);
+		lonSpacing = 1.0 / double(outDEM7.cols);
+
+
+		if (outDEM.size() != outDEM4.size())
+		{
+			resize(outDEM, outDEM, outDEM4.size());
+		}
+		if (outDEM2.size() != outDEM4.size())
+		{
+			resize(outDEM2, outDEM2, outDEM4.size());
+		}
+		if (outDEM3.size() != outDEM4.size())
+		{
+			resize(outDEM3, outDEM3, outDEM4.size());
+		}
+
+		cv::vconcat(outDEM, outDEM2, outDEM);
+		cv::vconcat(outDEM, outDEM3, outDEM);
+		cv::vconcat(outDEM, outDEM4, outDEM);
+
+		total_rows = outDEM.rows;
+		total_cols = outDEM.cols;
+
+		latUpperLeft = xx[0] + 1;
+		latLowerRight = xx[0] - 3;
+		lonUpperLeft = yy[0];
+		lonLowerRight = yy[0] + 4;
+
+		startRow = (latUpperLeft - latMax) / latSpacing;
+		startRow = startRow < 1 ? 1 : startRow;
+		startRow = startRow > total_rows ? total_rows : startRow;
+		endRow = (latUpperLeft - latMin) / latSpacing;
+		endRow = endRow < 1 ? 1 : endRow;
+		endRow = endRow > total_rows ? total_rows : endRow;
+		if (fabs(lonMax - lonMin) > 180.0)
+		{
+			startCol = (lonMax - lonUpperLeft) / lonSpacing;
+			startCol = startCol < 1 ? 1 : startCol;
+			startCol = startCol > total_cols ? total_cols : startCol;
+			endCol = (lonMin + 360.0 - lonUpperLeft) / lonSpacing;
+			endCol = endCol < 1 ? 1 : endCol;
+			endCol = endCol > total_cols ? total_cols : endCol;
+		}
+		else
+		{
+			startCol = (lonMin - lonUpperLeft) / lonSpacing;
+			startCol = startCol < 1 ? 1 : startCol;
+			startCol = startCol > total_cols ? total_cols : startCol;
+			endCol = (lonMax - lonUpperLeft) / lonSpacing;
+			endCol = endCol < 1 ? 1 : endCol;
+			endCol = endCol > total_cols ? total_cols : endCol;
+		}
+
+		outDEM(cv::Range(startRow - 1, endRow), cv::Range(startCol - 1, endCol)).copyTo(DEM_out);
+		*lonUL = lonUpperLeft + (startCol - 1) * lonSpacing;
+		*latUL = latUpperLeft - (startRow - 1) * latSpacing;
+		*lon_spacing = lonSpacing;
+		*lat_spacing = latSpacing;
+	}
+	//DEM在16个方格内
+	else if (CopernicusDEMFileName.size() == 36)
+	{
+		int xx[36], yy[36], temp;
+
+		for (int i = 0; i < 36; i++)
+		{
+			if (CopernicusDEMFileName[i].substr(22, 1) == string("N") && CopernicusDEMFileName[i].substr(29, 1) == string("E"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_N%d_00_E%d_00_DEM.tif", &xx[i], &yy[i]);
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("N") && CopernicusDEMFileName[i].substr(29, 1) == string("W"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_N%d_00_W%d_00_DEM.tif", &xx[i], &yy[i]);
+				yy[i] = -yy[i];
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("S") && CopernicusDEMFileName[i].substr(29, 1) == string("E"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_S%d_00_E%d_00_DEM.tif", &xx[i], &yy[i]);
+				xx[i] = -xx[i];
+			}
+			else if (CopernicusDEMFileName[i].substr(22, 1) == string("S") && CopernicusDEMFileName[i].substr(29, 1) == string("W"))
+			{
+				sscanf(CopernicusDEMFileName[i].c_str(), "Copernicus_DSM_COG_10_S%d_00_W%d_00_DEM.tif", &xx[i], &yy[i]);
+				yy[i] = -yy[i];
+				xx[i] = -xx[i];
+			}
+			else
+			{
+				return -1;
+			}
+		}
+		Mat outDEM, outDEM2, outDEM3, outDEM4, outDEM5, outDEM6, outDEM7, outDEM8, outDEM9, outDEM10, outDEM11;
+		//6行6列
+		string path = DEMPath + string("\\") + CopernicusDEMFileName[0];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[1];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM2);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM2 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[2];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[3];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[4];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[5];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM.rows, outDEM.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM, outDEM2, outDEM);
+		cv::hconcat(outDEM, outDEM3, outDEM);
+		cv::hconcat(outDEM, outDEM4, outDEM);
+		cv::hconcat(outDEM, outDEM5, outDEM);
+		cv::hconcat(outDEM, outDEM6, outDEM);
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[6];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM2);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM2 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[7];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[8];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[9];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[10];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[11];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM2.rows, outDEM2.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM2, outDEM3, outDEM2);
+		cv::hconcat(outDEM2, outDEM4, outDEM2);
+		cv::hconcat(outDEM2, outDEM5, outDEM2);
+		cv::hconcat(outDEM2, outDEM6, outDEM2);
+		cv::hconcat(outDEM2, outDEM7, outDEM2);
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[12];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM3);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM3 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[13];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[14];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[15];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[16];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[17];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM8);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM8 = Mat::zeros(outDEM3.rows, outDEM3.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM3, outDEM4, outDEM3);
+		cv::hconcat(outDEM3, outDEM5, outDEM3);
+		cv::hconcat(outDEM3, outDEM6, outDEM3);
+		cv::hconcat(outDEM3, outDEM7, outDEM3);
+		cv::hconcat(outDEM3, outDEM8, outDEM3);
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[18];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM4);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM4 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[19];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[20];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[21];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[22];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM8);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM8 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[23];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM9);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM9 = Mat::zeros(outDEM4.rows, outDEM4.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM4, outDEM5, outDEM4);
+		cv::hconcat(outDEM4, outDEM6, outDEM4);
+		cv::hconcat(outDEM4, outDEM7, outDEM4);
+		cv::hconcat(outDEM4, outDEM8, outDEM4);
+		cv::hconcat(outDEM4, outDEM9, outDEM4);
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[24];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM5);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM5 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[25];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(outDEM5.rows, outDEM5.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[26];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM5.rows, outDEM5.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[27];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM8);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM8 = Mat::zeros(outDEM5.rows, outDEM5.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[28];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM9);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM9 = Mat::zeros(outDEM5.rows, outDEM5.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[29];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM10);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM10 = Mat::zeros(outDEM5.rows, outDEM5.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM5, outDEM6, outDEM5);
+		cv::hconcat(outDEM5, outDEM7, outDEM5);
+		cv::hconcat(outDEM5, outDEM8, outDEM5);
+		cv::hconcat(outDEM5, outDEM9, outDEM5);
+		cv::hconcat(outDEM5, outDEM10, outDEM5);
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[30];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM6);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM6 = Mat::zeros(3600, 3600, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[31];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM7);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM7 = Mat::zeros(outDEM6.rows, outDEM6.cols, CV_32F);
+		}
+
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[32];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM8);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM8 = Mat::zeros(outDEM6.rows, outDEM6.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[33];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM9);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM9 = Mat::zeros(outDEM6.rows, outDEM6.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[34];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM10);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM10 = Mat::zeros(outDEM6.rows, outDEM6.cols, CV_32F);
+		}
+
+		path = DEMPath + string("\\") + CopernicusDEMFileName[35];
+		std::replace(path.begin(), path.end(), '/', '\\');
+		ret = CopernicusDEM_geotiffread(path.c_str(), outDEM11);
+		if (ret < 0)//未下载到用0填充
+		{
+			outDEM11 = Mat::zeros(outDEM6.rows, outDEM6.cols, CV_32F);
+		}
+
+		cv::hconcat(outDEM6, outDEM7, outDEM6);
+		cv::hconcat(outDEM6, outDEM8, outDEM6);
+		cv::hconcat(outDEM6, outDEM9, outDEM6);
+		cv::hconcat(outDEM6, outDEM10, outDEM6);
+		cv::hconcat(outDEM6, outDEM11, outDEM6);
+
+		latSpacing = 1.0 / double(outDEM11.rows);
+		lonSpacing = 1.0 / double(outDEM11.cols);
+
+
+		if (outDEM.size() != outDEM6.size())
+		{
+			resize(outDEM, outDEM, outDEM6.size());
+		}
+		if (outDEM2.size() != outDEM6.size())
+		{
+			resize(outDEM2, outDEM2, outDEM6.size());
+		}
+		if (outDEM3.size() != outDEM6.size())
+		{
+			resize(outDEM3, outDEM3, outDEM6.size());
+		}
+		if (outDEM4.size() != outDEM6.size())
+		{
+			resize(outDEM4, outDEM4, outDEM6.size());
+		}
+		if (outDEM5.size() != outDEM6.size())
+		{
+			resize(outDEM5, outDEM5, outDEM6.size());
+		}
+
+		cv::vconcat(outDEM, outDEM2, outDEM);
+		cv::vconcat(outDEM, outDEM3, outDEM);
+		cv::vconcat(outDEM, outDEM4, outDEM);
+		cv::vconcat(outDEM, outDEM5, outDEM);
+		cv::vconcat(outDEM, outDEM6, outDEM);
+
+		total_rows = outDEM.rows;
+		total_cols = outDEM.cols;
+
+		latUpperLeft = xx[0] + 1;
+		latLowerRight = xx[0] - 5;
+		lonUpperLeft = yy[0];
+		lonLowerRight = yy[0] + 6;
+
+		startRow = (latUpperLeft - latMax) / latSpacing;
+		startRow = startRow < 1 ? 1 : startRow;
+		startRow = startRow > total_rows ? total_rows : startRow;
+		endRow = (latUpperLeft - latMin) / latSpacing;
+		endRow = endRow < 1 ? 1 : endRow;
+		endRow = endRow > total_rows ? total_rows : endRow;
+		if (fabs(lonMax - lonMin) > 180.0)
+		{
+			startCol = (lonMax - lonUpperLeft) / lonSpacing;
+			startCol = startCol < 1 ? 1 : startCol;
+			startCol = startCol > total_cols ? total_cols : startCol;
+			endCol = (lonMin + 360.0 - lonUpperLeft) / lonSpacing;
+			endCol = endCol < 1 ? 1 : endCol;
+			endCol = endCol > total_cols ? total_cols : endCol;
+		}
+		else
+		{
+			startCol = (lonMin - lonUpperLeft) / lonSpacing;
+			startCol = startCol < 1 ? 1 : startCol;
+			startCol = startCol > total_cols ? total_cols : startCol;
+			endCol = (lonMax - lonUpperLeft) / lonSpacing;
+			endCol = endCol < 1 ? 1 : endCol;
+			endCol = endCol > total_cols ? total_cols : endCol;
+		}
+
+		outDEM(cv::Range(startRow - 1, endRow), cv::Range(startCol - 1, endCol)).copyTo(DEM_out);
+		*lonUL = lonUpperLeft + (startCol - 1) * lonSpacing;
+		*latUL = latUpperLeft - (startRow - 1) * latSpacing;
+		*lon_spacing = lonSpacing;
+		*lat_spacing = latSpacing;
+	}
 	else return -1;
 	return 0;
 }
@@ -14179,6 +14920,9 @@ int Utils::geocode(
 	Mat DEM, stateVector_interp;
 	interp_times_x = interp_times_x < 1 ? 1 : interp_times_x;
 	interp_times_y = interp_times_y < 1 ? 1 : interp_times_y;
+	//考虑DEM像素中心与边缘差值
+	lat_upperleft = lat_upperleft + lat_spacing / 2.0 - lat_spacing / (double)interp_times_y * 0.5;
+	lon_upperleft = lon_upperleft - lon_spacing / 2.0 + lon_spacing / (double)interp_times_x * 0.5;
 	cv::resize(DEM84, DEM, cv::Size(DEM84.cols * interp_times_x, DEM84.rows * interp_times_y));
 	lon_spacing = lon_spacing / (double)interp_times_x;
 	lat_spacing = lat_spacing / (double)interp_times_y;
@@ -14386,13 +15130,14 @@ int Utils::geocode(
 	double lat_per_meter = 360.0 / (C_long * cos(lat_upperleft / 180.0 * PI));//纬线上每米多少度
 	interp_times_x = lon_spacing / lon_per_meter / mapped_resolution_x;
 	interp_times_y = lat_spacing / lat_per_meter / mapped_resolution_y;
+	interp_times_x = interp_times_x < 1 ? 1 : interp_times_x;
+	interp_times_y = interp_times_y < 1 ? 1 : interp_times_y;
 	//考虑DEM像素中心与边缘差值
 	lat_upperleft = lat_upperleft + lat_spacing / 2.0 - lat_spacing / (double)interp_times_y * 0.5;
 	lon_upperleft = lon_upperleft - lon_spacing / 2.0 + lon_spacing / (double)interp_times_x * 0.5;
 	//84坐标系DEM插值
 	Mat DEM, stateVector_interp;
-	interp_times_x = interp_times_x < 1 ? 1 : interp_times_x;
-	interp_times_y = interp_times_y < 1 ? 1 : interp_times_y;
+	
 	cv::resize(DEM84, DEM, cv::Size(DEM84.cols * interp_times_x, DEM84.rows * interp_times_y));
 	lon_spacing = lon_spacing / (double)interp_times_x;
 	lat_spacing = lat_spacing / (double)interp_times_y;
@@ -14548,6 +15293,248 @@ int Utils::geocode(
 					mapped_slc.re.at<short>(i, j) = double(mapped_slc.re.at<short>(i, j)) / 4.0;*/
 				}
 			}
+		}
+	}
+	if (lat_north && lat_south && lon_east && lon_west)
+	{
+		*lat_north = lat_upperleft;
+		*lat_south = lat_upperleft - (double)(DEM.rows - 1) * lat_spacing;
+		*lon_west = lon_upperleft;
+		*lon_east = lon_upperleft + (double)(DEM.cols - 1) * lon_spacing;
+		*lon_east = *lon_east > 180.0 ? (*lon_east - 360.0) : *lon_east;
+	}
+	return 0;
+}
+
+
+int Utils::geocode(
+	Mat& DEM84,
+	ComplexMat& slc,
+	double mapped_resolution_x,
+	double mapped_resolution_y,
+	ComplexMat& mapped_slc,
+	double lon_upperleft,
+	double lat_upperleft,
+	int offset_row,
+	int offset_col,
+	int sceneHeight,
+	int sceneWidth,
+	double prf,
+	double rangeSpacing,
+	double wavelength,
+	double nearRangeTime,
+	double acquisitionStartTime,
+	double acquisitionStopTime,
+	Mat& stateVector,
+	double lon_spacing,
+	double lat_spacing,
+	int resample_method,
+	double* lon_east,
+	double* lon_west,
+	double* lat_north,
+	double* lat_south
+)
+{
+	if (DEM84.empty() ||
+		DEM84.type() != CV_16S ||
+		(slc.type() != CV_32F && slc.type() != CV_16S) ||
+		sceneHeight < 10 ||
+		sceneWidth < 10 ||
+		prf <= 0 ||
+		wavelength <= 0 ||
+		rangeSpacing <= 0 ||
+		nearRangeTime <= 0 ||
+		acquisitionStartTime <= 0 ||
+		acquisitionStopTime <= 0 ||
+		lon_spacing <= 0.0 ||
+		lat_spacing <= 0.0 ||
+		fabs(lon_upperleft) > 180.0 ||
+		fabs(lat_upperleft) > 90.0 ||
+		stateVector.type() != CV_64F ||
+		stateVector.rows < 5 ||
+		stateVector.cols != 7
+		)
+	{
+		fprintf(stderr, "geocode(): input check failed!\n");
+		return -1;
+	}
+	//计算DEM插值倍数
+	int interp_times_x, interp_times_y;
+	double a = 6378137, b = 6356752;
+	double C_short = (a + b) * PI;//经线一圈长度
+	double C_long = a * 2 * PI;
+	double lon_per_meter = 360.0 / C_short;//经线上每米多少度
+	double lat_per_meter = 360.0 / (C_long * cos(lat_upperleft / 180.0 * PI));//纬线上每米多少度
+	interp_times_x = lon_spacing / lon_per_meter / mapped_resolution_x;
+	interp_times_y = lat_spacing / lat_per_meter / mapped_resolution_y;
+	//考虑DEM像素中心与边缘差值
+	interp_times_x = interp_times_x < 1 ? 1 : interp_times_x;
+	interp_times_y = interp_times_y < 1 ? 1 : interp_times_y;
+	lat_upperleft = lat_upperleft + lat_spacing / 2.0 - lat_spacing / (double)interp_times_y * 0.5;
+	lon_upperleft = lon_upperleft - lon_spacing / 2.0 + lon_spacing / (double)interp_times_x * 0.5;
+	//84坐标系DEM插值
+	Mat DEM, stateVector_interp;
+	
+	cv::resize(DEM84, DEM, cv::Size(DEM84.cols * interp_times_x, DEM84.rows * interp_times_y));
+	lon_spacing = lon_spacing / (double)interp_times_x;
+	lat_spacing = lat_spacing / (double)interp_times_y;
+	//初始化轨道类
+	orbitStateVectors stateVectors(stateVector, acquisitionStartTime, acquisitionStopTime);
+	stateVectors.applyOrbit();
+	int ret;
+	double time_interval = 1.0 / prf;
+
+	int DEM_rows = DEM.rows; int DEM_cols = DEM.cols;
+	double dopplerFrequency = 0.0;
+	mapped_slc.re.create(DEM.rows, DEM.cols, slc.type()); mapped_slc.re = 0.0;
+	mapped_slc.im.create(DEM.rows, DEM.cols, slc.type()); mapped_slc.im = 0.0;
+	//地理编码
+#pragma omp parallel for schedule(guided)
+	for (int i = 0; i < DEM_rows; i++)
+	{
+		for (int j = 0; j < DEM_cols; j++)
+		{
+			Position groundPosition;
+			double lat, lon, height;
+			lat = lat_upperleft - (double)i * lat_spacing;
+			lon = lon_upperleft + (double)j * lon_spacing;
+			lon = lon > 180.0 ? (lon - 360.0) : lon;
+			height = DEM.at<short>(i, j);
+			Utils::ell2xyz(lon, lat, height, groundPosition);
+			int numOrbitVec = stateVectors.newStateVectors.rows;
+			double firstVecTime = 0.0;
+			double secondVecTime = 0.0;
+			double firstVecFreq = 0.0;
+			double secondVecFreq = 0.0;
+			double currentFreq, xdiff, ydiff, zdiff, distance = 1.0, zeroDopplerTime;
+			for (int ii = 0; ii < numOrbitVec; ii++) {
+				Position orb_pos(stateVectors.newStateVectors.at<double>(ii, 1), stateVectors.newStateVectors.at<double>(ii, 2),
+					stateVectors.newStateVectors.at<double>(ii, 3));
+				Velocity orb_vel(stateVectors.newStateVectors.at<double>(ii, 4), stateVectors.newStateVectors.at<double>(ii, 5),
+					stateVectors.newStateVectors.at<double>(ii, 6));
+				currentFreq = 0;
+				xdiff = groundPosition.x - orb_pos.x;
+				ydiff = groundPosition.y - orb_pos.y;
+				zdiff = groundPosition.z - orb_pos.z;
+				distance = sqrt(xdiff * xdiff + ydiff * ydiff + zdiff * zdiff);
+				currentFreq = 2.0 * (xdiff * orb_vel.vx + ydiff * orb_vel.vy + zdiff * orb_vel.vz) / (wavelength * distance);
+				if (ii == 0 || (firstVecFreq - dopplerFrequency) * (currentFreq - dopplerFrequency) > 0) {
+					firstVecTime = stateVectors.newStateVectors.at<double>(ii, 0);
+					firstVecFreq = currentFreq;
+				}
+				else {
+					secondVecTime = stateVectors.newStateVectors.at<double>(ii, 0);
+					secondVecFreq = currentFreq;
+					break;
+				}
+			}
+
+			if ((firstVecFreq - dopplerFrequency) * (secondVecFreq - dopplerFrequency) >= 0.0) {
+				continue;
+			}
+
+			double lowerBoundTime = firstVecTime;
+			double upperBoundTime = secondVecTime;
+			double lowerBoundFreq = firstVecFreq;
+			double upperBoundFreq = secondVecFreq;
+			double midTime, midFreq;
+			double diffTime = fabs(upperBoundTime - lowerBoundTime);
+			double absLineTimeInterval = time_interval;
+
+			int totalIterations = (int)(diffTime / absLineTimeInterval) + 1;
+			int numIterations = 0; Position pos; Velocity vel;
+			while (diffTime > absLineTimeInterval * 0.1 && numIterations <= totalIterations) {
+
+				midTime = (upperBoundTime + lowerBoundTime) / 2.0;
+				stateVectors.getPosition(midTime, pos);
+				stateVectors.getVelocity(midTime, vel);
+				xdiff = groundPosition.x - pos.x;
+				ydiff = groundPosition.y - pos.y;
+				zdiff = groundPosition.z - pos.z;
+				distance = sqrt(xdiff * xdiff + ydiff * ydiff + zdiff * zdiff);
+				midFreq = 2.0 * (xdiff * vel.vx + ydiff * vel.vy + zdiff * vel.vz) / (wavelength * distance);
+				if ((midFreq - dopplerFrequency) * (lowerBoundFreq - dopplerFrequency) > 0.0) {
+					lowerBoundTime = midTime;
+					lowerBoundFreq = midFreq;
+				}
+				else if ((midFreq - dopplerFrequency) * (upperBoundFreq - dopplerFrequency) > 0.0) {
+					upperBoundTime = midTime;
+					upperBoundFreq = midFreq;
+				}
+				else if (fabs(midFreq - dopplerFrequency) < 0.01) {
+					zeroDopplerTime = midTime;
+					break;
+				}
+
+				diffTime = fabs(upperBoundTime - lowerBoundTime);
+				numIterations++;
+			}
+
+
+			zeroDopplerTime = lowerBoundTime - lowerBoundFreq * (upperBoundTime - lowerBoundTime) / (upperBoundFreq - lowerBoundFreq);
+			
+			double src_y = (zeroDopplerTime - acquisitionStartTime) / time_interval - offset_row;
+			double src_x = (distance - nearRangeTime * VEL_C * 0.5) / rangeSpacing - offset_col;
+
+			int azimuthIndex = (int)floor(src_y);
+			int rangeIndex = (int)floor(src_x);
+
+			double ratio_y = src_y - (double)azimuthIndex;
+			double ratio_x = src_x - (double)rangeIndex;
+
+			// 双线性至少需要 2×2 邻域
+			if (azimuthIndex < 0 || azimuthIndex > sceneHeight - 2 ||
+				rangeIndex < 0 || rangeIndex > sceneWidth - 2)
+			{
+				continue;
+			}
+			else
+			{
+				// 立方卷积需要 4×4 邻域：中心点周围 -1,0,1,2
+				// 边界不满足时自动回退到双线性，避免越界
+				bool canCubic =
+					(resample_method == RESAMPLE_CUBIC) &&
+					azimuthIndex >= 1 && azimuthIndex <= sceneHeight - 3 &&
+					rangeIndex >= 1 && rangeIndex <= sceneWidth - 3;
+
+				if (slc.type() == CV_32F)
+				{
+					double re_val, im_val;
+
+					if (canCubic)
+					{
+						re_val = cubicAt<float>(slc.re, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+						im_val = cubicAt<float>(slc.im, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+					}
+					else
+					{
+						re_val = bilinearAt<float>(slc.re, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+						im_val = bilinearAt<float>(slc.im, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+					}
+
+					mapped_slc.re.at<float>(i, j) = (float)re_val;
+					mapped_slc.im.at<float>(i, j) = (float)im_val;
+				}
+				else
+				{
+					double re_val, im_val;
+
+					if (canCubic)
+					{
+						re_val = cubicAt<short>(slc.re, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+						im_val = cubicAt<short>(slc.im, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+					}
+					else
+					{
+						re_val = bilinearAt<short>(slc.re, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+						im_val = bilinearAt<short>(slc.im, azimuthIndex, rangeIndex, ratio_y, ratio_x);
+					}
+
+					mapped_slc.re.at<short>(i, j) = cv::saturate_cast<short>(re_val);
+					mapped_slc.im.at<short>(i, j) = cv::saturate_cast<short>(im_val);
+				}
+			}
+			
 		}
 	}
 	if (lat_north && lat_south && lon_east && lon_west)
